@@ -57,6 +57,9 @@ def predict_sound(file: UploadFile = File(...)):
     # audio = preprocess(file_location)
 
     result, confident = predict(audio)
+    
+    if confident < 70:
+      return {"label": "not detect", "confident": confident}
 
     return {"label": result, "confident": confident}
 
