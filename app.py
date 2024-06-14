@@ -1,71 +1,72 @@
-from fastapi import FastAPI, UploadFile, File
+import io
+from fastapi import FastAPI
 import tensorflow as tf
-import tensorflow_io as tfio
+import socketio
 from pydub import AudioSegment
 
+# Initialize FastAPI and Socket.IO for real-time sound classification usable in Android Kotlin via microphone
 app = FastAPI()
+sio = socketio.AsyncServer(cors_allowed_origins='*', async_mode='asgi')
+socket_app = socketio.ASGIApp(sio)
+app.mount("/", socket_app)
 
 # Load the model
 loaded_model = tf.saved_model.load("model")
 
-# Preprocess audio change to 16k
+# Preprocess audio to 16k
 TARGET_SAMPLE_RATE = 16000
 
-my_classes = ['crying_baby', 'door_knock', 'glass_breaking', 'siren', 'car_horn', 'train', 'door_bells', 'cat', 'dog',  'gun_shot']
+my_classes = ['crying_baby', 'door_knock', 'glass_breaking', 'siren', 'car_horn', 'train', 'door_bells', 'cat', 'dog', 'gun_shot']
 
-def preprocess(filename):
-  file_contents = tf.io.read_file(filename)
-  wav, sample_rate = tf.audio.decode_wav(
-    file_contents,
-    desired_channels=1)
-
-  wav = tf.squeeze(wav, axis=-1)
-  sample_rate = tf.cast(sample_rate, dtype=tf.int64)
-  wav = tfio.audio.resample(wav, rate_in=sample_rate, rate_out=TARGET_SAMPLE_RATE)
-  
-  return wav
+def preprocess(audio_data):
+    audio = tf.audio.decode_wav(audio_data, desired_channels=1, desired_samples=TARGET_SAMPLE_RATE)
+    audio = tf.squeeze(audio.audio, axis=-1)
+    return audio
 
 def predict(audio):
-  result = loaded_model(audio)
-  top_class = tf.math.argmax(result)
-  probably = tf.nn.softmax(result, axis=-1)
-  your_top_score = probably[top_class]
+    result = loaded_model(audio)
+    top_class = tf.math.argmax(result)
+    probably = tf.nn.softmax(result, axis=-1)
+    your_top_score = probably[top_class]
 
-  infered_class = my_classes[top_class]
+    infered_class = my_classes[top_class]
 
-  return infered_class, int(your_top_score*100)
+    return infered_class, int(your_top_score*100)
 
-# === Convert
-def convert_to_wav(file_path, target_path):
-  audio = AudioSegment.from_file(file_path)
-  audio = audio.set_channels(1)
-  audio = audio.set_frame_rate(TARGET_SAMPLE_RATE)
-  audio.export(target_path, format="wav")
+# Convert audio bytes to WAV format and process
+def convert_and_preprocess(data):
+    audio = AudioSegment.from_file(io.BytesIO(data), format="raw", frame_rate=44100, channels=1, sample_width=2)
+    audio = audio.set_frame_rate(TARGET_SAMPLE_RATE)
+    audio_data = audio.raw_data
+    return preprocess(audio_data)
 
-@app.post("/predict")
-def predict_sound(file: UploadFile = File(...)):
-  try:
-    file_location = f"/tmp/{file.filename}"
-    with open(file_location, "wb+") as file_object:
-      file_object.write(file.file.read())
+@sio.event
+async def connect(sid, environ):
+    print(f"Client {sid} connected")
+    await sio.emit('response', {'message': 'Connected to server'})
 
-    wav_file_location = f"/tmp/converted_{file.filename}"
-    convert_to_wav(file_location, wav_file_location)
+@sio.event
+async def disconnect(sid):
+    print(f"Client {sid} disconnected")
 
-    audio = preprocess(wav_file_location)
+@sio.event
+async def predict_audio(sid, data):
+    try:
+        audio = convert_and_preprocess(data)
+        result, confidence = predict(audio)
 
-    # audio = preprocess(file_location)
+        if confidence < 70:
+            await sio.emit('response', {'label': "not_detect", 'confidence': confidence}, to=sid)
+        else:
+            await sio.emit('response', {'label': result, 'confidence': confidence}, to=sid)
 
-    result, confident = predict(audio)
-    
-    if confident < 70:
-      return {"label": "not detect", "confident": confident}
+    except Exception as e:
+        await sio.emit('response', {'error': str(e)}, to=sid)
 
-    return {"label": result, "confident": confident}
-
-  except Exception as e:
-    return {"error": str(e)}
+@app.get('/')
+def hello_world():
+  return {"test": "hello"}
 
 if __name__ == "__main__":
-  import uvicorn
-  uvicorn.run(app, host="0.0.0.0", port=8000)
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
