@@ -37,8 +37,10 @@ def predict(audio):
 def convert_and_preprocess(data):
     audio = AudioSegment.from_file(io.BytesIO(data), format="raw", frame_rate=44100, channels=1, sample_width=2)
     audio = audio.set_frame_rate(TARGET_SAMPLE_RATE)
-    audio_data = audio.raw_data
-    return preprocess(audio_data)
+    audio_data = io.BytesIO()
+    audio.export(audio_data, format="wav")
+    audio_data.seek(0)
+    return preprocess(audio_data.read())
 
 @sio.event
 async def connect(sid, environ):
