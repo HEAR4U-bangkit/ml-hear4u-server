@@ -17,7 +17,7 @@ Some several technologies or libraries that we used:
 ## Get Started
 Clone `repository` with command:
 ```
-git clone https://github.com/HEAR4U-bangkit/cc-hear4u-server.git
+git clone https://github.com/HEAR4U-bangkit/ml-hear4u-server.git
 ```
 
 Install dependencies:
